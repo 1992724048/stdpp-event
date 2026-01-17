@@ -7,7 +7,7 @@
 * Unified management and invocation of multiple callbacks
 * Collection and synchronization of callback execution results
 * Key-based event dispatching (`Dispatcher`)
-* Buffered asynchronous queue processing (`EventQueue`)
+* Queued batched event processing (`EventQueue`)
 * Combined queue + dispatch model (`QueueDispatcher`)
 
 All components support:
