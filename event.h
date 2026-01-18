@@ -1,6 +1,6 @@
 ﻿#pragma once
 
-// https://github.com/1992724048/stdpp-event/upload/main
+// https://github.com/1992724048/stdpp-event
 // 1.0.1
 
 #include <type_traits>
@@ -1042,3 +1042,4 @@ namespace stdpp::event {
         }
     };
 }
+
