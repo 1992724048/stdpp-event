@@ -115,6 +115,11 @@ h.wait();
 
 ---
 
+> [!IMPORTANT]
+> ## Queue Waiting Semantics
+> **For `EventQueue` and `QueueDispatcher`, `wait()` operates on a per-event basis.**
+> This behavior is **different from `Event` and `Dispatcher`** and must be understood correctly.
+
 ## EventQueue — Buffered Batch Processing Queue
 
 ```cpp
@@ -199,5 +204,153 @@ The `Handle` provides:
 | `wait()`    | Block until the next execution completes  |
 | `last()`    | Retrieve the most recent execution result |
 | Auto-unbind | Automatically unsubscribed on destruction |
+---
+
+## Remove / Unsubscribe
+
+All event types support **explicit removal of callbacks**, allowing manual lifetime control or early unbinding.
 
 ---
+
+### Event — Removing Callbacks
+
+```cpp
+stdpp::event::Event<int(int)> ev;
+
+auto h = ev.append(&foo);
+```
+
+Two removal methods are supported:
+
+#### 1. Remove by Function Pointer
+
+```cpp
+ev.remove(&foo);
+```
+
+* Removes **all callbacks** whose target function equals `&foo`
+* Suitable for free functions or static member functions
+
+#### 2. Remove by Handle (Recommended)
+
+```cpp
+ev.remove(h);
+```
+
+* Precisely removes the specific subscription represented by the handle
+* Does **not** depend on function identity
+* Fully **thread-safe**
+
+> Note:
+> `Handle` internally holds a weak reference.
+> If the handle is already expired (event destroyed or previously removed),
+> `remove(handle)` becomes a no-op.
+
+---
+
+### Dispatcher — Removing Subscriptions
+
+```cpp
+stdpp::event::Dispatcher<int, void(int)> disp;
+auto h = disp.subscribe(42, &on_event);
+```
+
+Supported removal forms:
+
+```cpp
+disp.remove(42, &on_event);   // remove this function under key == 42
+disp.remove(&on_event);       // remove this function from all keys
+disp.remove(42);              // remove all callbacks bound to key == 42
+disp.remove(h);               // remove by Handle (precise)
+```
+
+---
+
+### EventQueue / QueueDispatcher — Removing Callbacks
+
+```cpp
+auto h = queue.append(&process);
+queue.remove(&process);
+queue.remove(h);
+```
+
+```cpp
+auto h = qd.subscribe(1, &process);
+qd.remove(1, &process);
+qd.remove(&process);
+qd.remove(1);
+qd.remove(h);
+```
+
+* Removal only affects **future executions**
+* Items already enqueued but not yet processed will be ignored if no callbacks remain
+
+---
+
+### Core Rule
+
+**Each queued item (`enqueue`) produces one waitable completion event per callback.**
+
+That means:
+
+* `enqueue()` → **does not trigger anything**
+* `operator()()` processes queued items
+* **Each processed item pushes exactly one result per callback**
+* `wait()` waits until **at least one result is available**
+* `last()` **consumes and clears all currently available results**
+
+---
+
+### Example: Per-Event Waiting
+
+```cpp
+stdpp::event::EventQueue<int(int)> q;
+
+auto h = q.append([](int v) {
+    return v * 2;
+});
+
+q.enqueue(1);
+q.enqueue(2);
+q.enqueue(3);
+
+std::thread([&] {
+    q();   // processes 3 queued events
+}).detach();
+```
+
+#### Correct Waiting Pattern
+
+```cpp
+for (int i = 0; i < 3; ++i) {
+    h.wait();           // waits for one event to complete
+    auto r = h.last();  // consumes available results
+}
+```
+
+---
+
+### Common Misconception
+```cpp
+h.wait();
+auto all = h.last();   // does NOT guarantee the entire queue is done
+```
+
+Reason:
+
+* `wait()` unblocks as soon as **any result becomes available**
+* The first processed event is sufficient to wake it
+* Remaining events may still be running
+
+---
+
+### Correct Mental Model
+
+| Component         | Meaning of `wait()`                          |
+| ----------------- | -------------------------------------------- |
+| `Event`           | Waits for the **next full invocation**       |
+| `Dispatcher`      | Waits until **this subscriber is triggered** |
+| `EventQueue`      | Waits for **one queued event to complete**   |
+| `QueueDispatcher` | Waits for **one queued event under a key**   |
+
+
