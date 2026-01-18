@@ -7,6 +7,7 @@
 #include <queue>
 #include <shared_mutex>
 #include <optional>
+#include <ranges>
 
 namespace stdpp::event {
     template<typename>
@@ -46,6 +47,10 @@ namespace stdpp::event {
         class Handle {
         public:
             [[nodiscard]] auto last() const {
+                if (node.expired()) {
+                    return decltype(Node::last_value)();
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     if constexpr (is_void) {
@@ -65,6 +70,10 @@ namespace stdpp::event {
 
             template<class Rep, class Period>
             [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -80,6 +89,10 @@ namespace stdpp::event {
             }
 
             [[nodiscard]] auto wait() const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -108,6 +121,31 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto remove(T* func) -> void {
+            std::unique_lock _(mutex);
+            std::erase_if(nodes,
+                          [&](std::shared_ptr<Node> node) {
+                              auto p = node->func.template target<T*>();
+                              return p && *p == func;
+                          });
+        }
+
+        auto remove(const Handle& handle) -> void {
+            auto target = handle.node.lock();
+            if (!target) {
+                return;
+            }
+
+            std::unique_lock _(mutex);
+            std::erase_if(nodes,
+                          [&](const std::shared_ptr<Node>& node) {
+                              if (!handle.node.expired()) {
+                                  return node == target;
+                              }
+                              return false;
+                          });
         }
 
         template<typename... Args>
@@ -166,6 +204,10 @@ namespace stdpp::event {
         class Handle {
         public:
             [[nodiscard]] auto last() const {
+                if (node.expired()) {
+                    return decltype(Node::last_value)();
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     if constexpr (is_void) {
@@ -181,6 +223,10 @@ namespace stdpp::event {
 
             template<class Rep, class Period>
             [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -196,6 +242,10 @@ namespace stdpp::event {
             }
 
             [[nodiscard]] auto wait() const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -226,6 +276,55 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto remove(const Key& key, FuncT* func) -> void {
+            std::unique_lock _(mutex);
+            if (!dispatchers.contains(key)) {
+                return;
+            }
+            std::erase_if(dispatchers[key],
+                          [&](std::shared_ptr<Node> node) {
+                              auto p = node->func.template target<FuncT*>();
+                              return p && *p == func;
+                          });
+        }
+
+        auto remove(FuncT* func) -> void {
+            std::unique_lock _(mutex);
+            for (auto& dispatcher : dispatchers | std::views::values) {
+                std::erase_if(dispatcher,
+                              [&](std::shared_ptr<Node> node) {
+                                  auto p = node->func.template target<FuncT*>();
+                                  return p && *p == func;
+                              });
+            }
+        }
+
+        auto remove(const Key& key) -> void {
+            std::unique_lock _(mutex);
+            if (!dispatchers.contains(key)) {
+                return;
+            }
+            dispatchers.erase(key);
+        }
+
+        auto remove(const Handle& handle) -> void {
+            auto target = handle.node.lock();
+            if (!target) {
+                return;
+            }
+
+            std::unique_lock _(mutex);
+            for (auto& dispatcher : dispatchers | std::views::values) {
+                std::erase_if(dispatcher,
+                              [&](const std::shared_ptr<Node>& node) {
+                                  if (!handle.node.expired()) {
+                                      return node == target;
+                                  }
+                                  return false;
+                              });
+            }
         }
 
         template<typename... Args>
@@ -288,16 +387,19 @@ namespace stdpp::event {
             Func func;
             mutable std::shared_mutex mutex;
             std::condition_variable_any cv;
-            std::conditional_t<is_void, std::queue<bool>, std::queue<Ret>> results;
+            std::conditional_t<is_void, std::queue<bool>, std::queue<std::optional<Ret>>> results;
         };
 
     public:
         class Handle {
         public:
-            using ResultVec = std::conditional_t<is_void, std::vector<bool>, std::vector<Ret>>;
+            using ResultVec = std::conditional_t<is_void, std::vector<bool>, std::vector<std::optional<Ret>>>;
 
             [[nodiscard]] auto last() -> ResultVec {
                 ResultVec out;
+                if (node.expired()) {
+                    return out;
+                }
 
                 auto n = node.lock();
                 if (!n) {
@@ -320,6 +422,10 @@ namespace stdpp::event {
 
             template<class Rep, class Period>
             [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -334,6 +440,10 @@ namespace stdpp::event {
             }
 
             [[nodiscard]] auto wait() const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -363,6 +473,33 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto remove(FuncT* func) -> void {
+            std::unique_lock _(cb_mutex);
+            for (auto& callback : callbacks | std::views::values) {
+                std::erase_if(callback,
+                              [&](std::shared_ptr<Node> node) {
+                                  auto p = node->func.template target<FuncT*>();
+                                  return p && *p == func;
+                              });
+            }
+        }
+
+        auto remove(const Handle& handle) -> void {
+            auto target = handle.node.lock();
+            if (!target) {
+                return;
+            }
+
+            std::unique_lock _(cb_mutex);
+            std::erase_if(callbacks,
+                          [&](const std::shared_ptr<Node>& node) {
+                              if (!handle.node.expired()) {
+                                  return node == target;
+                              }
+                              return false;
+                          });
         }
 
         template<typename... Args>
@@ -402,25 +539,24 @@ namespace stdpp::event {
                 for (auto& n : targets) {
                     std::apply([&](auto&&... unpacked) {
                                    try {
+                                       std::unique_lock lk(n->mutex);
+                                       if (n->results.size() >= MaxResults) {
+                                           n->results.pop();
+                                       }
+
                                        if constexpr (is_void) {
                                            n->func(unpacked...);
-                                           std::unique_lock lk(n->mutex);
-                                           if (n->results.size() >= MaxResults) {
-                                               n->results.pop();
-                                           }
                                            n->results.push(true);
                                        } else {
                                            auto r = n->func(unpacked...);
-                                           std::unique_lock lk(n->mutex);
-                                           if (n->results.size() >= MaxResults) {
-                                               n->results.pop();
-                                           }
                                            n->results.push(std::move(r));
                                        }
                                    } catch (...) {
                                        std::unique_lock lk(n->mutex);
                                        if constexpr (is_void) {
                                            n->results.push(false);
+                                       } else {
+                                           n->results.push(std::nullopt);
                                        }
                                    }
                                    n->cv.notify_all();
@@ -456,16 +592,19 @@ namespace stdpp::event {
             Func func;
             mutable std::shared_mutex mutex;
             std::condition_variable_any cv;
-            std::conditional_t<is_void, std::queue<bool>, std::queue<Ret>> results;
+            std::conditional_t<is_void, std::queue<bool>, std::queue<std::optional<Ret>>> results;
         };
 
     public:
         class Handle {
         public:
-            using ResultVec = std::conditional_t<is_void, std::vector<bool>, std::vector<Ret>>;
+            using ResultVec = std::conditional_t<is_void, std::vector<bool>, std::vector<std::optional<Ret>>>;
 
             [[nodiscard]] auto last() -> ResultVec {
                 ResultVec out;
+                if (node.expired()) {
+                    return out;
+                }
 
                 auto n = node.lock();
                 if (!n) {
@@ -486,6 +625,10 @@ namespace stdpp::event {
 
             template<class Rep, class Period>
             [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -500,6 +643,10 @@ namespace stdpp::event {
             }
 
             [[nodiscard]] auto wait() const -> bool {
+                if (node.expired()) {
+                    return false;
+                }
+
                 auto n = node.lock();
                 if (!n) {
                     return false;
@@ -529,6 +676,56 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto remove(const Key& key, FuncT* func) -> void {
+            std::unique_lock _(cb_mutex);
+            if (!callbacks.contains(key)) {
+                return;
+            }
+
+            std::erase_if(callbacks[key],
+                          [&](std::shared_ptr<Node> node) {
+                              auto p = node->func.template target<FuncT*>();
+                              return p && *p == func;
+                          });
+        }
+
+        auto remove(FuncT* func) -> void {
+            std::unique_lock _(cb_mutex);
+            for (auto& dispatcher : callbacks | std::views::values) {
+                std::erase_if(dispatcher,
+                              [&](std::shared_ptr<Node> node) {
+                                  auto p = node->func.template target<FuncT*>();
+                                  return p && *p == func;
+                              });
+            }
+        }
+
+        auto remove(const Key& key) -> void {
+            std::unique_lock _(cb_mutex);
+            if (!callbacks.contains(key)) {
+                return;
+            }
+            callbacks.erase(key);
+        }
+
+        auto remove(const Handle& handle) -> void {
+            auto target = handle.node.lock();
+            if (!target) {
+                return;
+            }
+
+            std::unique_lock _(cb_mutex);
+            for (auto& dispatcher : callbacks | std::views::values) {
+                std::erase_if(dispatcher,
+                              [&](const std::shared_ptr<Node>& node) {
+                                  if (!handle.node.expired()) {
+                                      return node == target;
+                                  }
+                                  return false;
+                              });
+            }
         }
 
         template<typename... Args>
@@ -589,6 +786,8 @@ namespace stdpp::event {
                                        std::unique_lock lk(n->mutex);
                                        if constexpr (is_void) {
                                            n->results.push(false);
+                                       } else {
+                                           n->results.push(std::nullopt);
                                        }
                                    }
                                    n->cv.notify_all();
