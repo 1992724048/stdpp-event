@@ -40,9 +40,13 @@ auto h1 = process.append([](int a, int b) {
     return a + b;
 });
 
-auto h2 = process.append([](int a, int b) {
+auto h2 = process += ([](int a, int b) {
     return a + b + a;
 });
+
+// auto h2 = process + ([](int a, int b) {
+//     return a + b + a;
+// });
 ```
 
 Asynchronous invocation with result synchronization:
@@ -97,6 +101,10 @@ stdpp::event::Dispatcher<int, void(int)> disp;
 auto h = disp.subscribe(42, [](int x) {
     TLOG << "Dispatcher got: " << x;
 });
+
+// auto h = disp += {42, [](int x) {
+//     TLOG << "Dispatcher got: " << x;
+// }};
 ```
 
 Trigger a specific key:
@@ -226,6 +234,8 @@ Two removal methods are supported:
 
 ```cpp
 ev.remove(&foo);
+// ev - &foo;
+// ev -= &foo;
 ```
 
 * Removes **all callbacks** whose target function equals `&foo`
