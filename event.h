@@ -279,34 +279,43 @@ namespace stdpp::event {
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
-            std::unique_lock _(mutex);
-            if (!dispatchers.contains(key)) {
-                return;
-            }
-            std::erase_if(dispatchers[key],
-                          [&](std::shared_ptr<Node> node) {
-                              auto p = node->func.template target<FuncT*>();
-                              return p && *p == func;
-                          });
-        }
-
-        auto remove(FuncT* func) -> void {
-            std::unique_lock _(mutex);
-            for (auto& dispatcher : dispatchers | std::views::values) {
-                std::erase_if(dispatcher,
+            {
+                std::unique_lock _(mutex);
+                if (!dispatchers.contains(key)) {
+                    return;
+                }
+                std::erase_if(dispatchers[key],
                               [&](std::shared_ptr<Node> node) {
                                   auto p = node->func.template target<FuncT*>();
                                   return p && *p == func;
                               });
             }
+            clear_callbacks();
+        }
+
+        auto remove(FuncT* func) -> void {
+            {
+                std::unique_lock _(mutex);
+                for (auto& dispatcher : dispatchers | std::views::values) {
+                    std::erase_if(dispatcher,
+                                  [&](std::shared_ptr<Node> node) {
+                                      auto p = node->func.template target<FuncT*>();
+                                      return p && *p == func;
+                                  });
+                }
+            }
+            clear_callbacks();
         }
 
         auto remove(const Key& key) -> void {
-            std::unique_lock _(mutex);
-            if (!dispatchers.contains(key)) {
-                return;
+            {
+                std::unique_lock _(mutex);
+                if (!dispatchers.contains(key)) {
+                    return;
+                }
+                dispatchers.erase(key);
             }
-            dispatchers.erase(key);
+            clear_callbacks();
         }
 
         auto remove(const Handle& handle) -> void {
@@ -315,16 +324,19 @@ namespace stdpp::event {
                 return;
             }
 
-            std::unique_lock _(mutex);
-            for (auto& dispatcher : dispatchers | std::views::values) {
-                std::erase_if(dispatcher,
-                              [&](const std::shared_ptr<Node>& node) {
-                                  if (!handle.node.expired()) {
-                                      return node == target;
-                                  }
-                                  return false;
-                              });
+            {
+                std::unique_lock _(mutex);
+                for (auto& dispatcher : dispatchers | std::views::values) {
+                    std::erase_if(dispatcher,
+                                  [&](const std::shared_ptr<Node>& node) {
+                                      if (!handle.node.expired()) {
+                                          return node == target;
+                                      }
+                                      return false;
+                                  });
+                }
             }
+            clear_callbacks();
         }
 
         template<typename... Args>
@@ -371,6 +383,24 @@ namespace stdpp::event {
     private:
         mutable std::shared_mutex mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> dispatchers;
+
+        auto clear_callbacks() -> void {
+            std::vector<Key> empty_keys;
+            std::shared_lock _(mutex);
+            for (const auto& [key, calls] : dispatchers) {
+                if (calls.empty()) {
+                    empty_keys.push_back(key);
+                }
+            }
+
+            if (!empty_keys.empty()) {
+                for (const auto& key : empty_keys) {
+                    if (dispatchers.contains(key)) {
+                        dispatchers.erase(key);
+                    }
+                }
+            }
+        }
     };
 
     template<typename FuncT, size_t MaxResults = 1024> requires std::is_function_v<FuncT>
@@ -679,35 +709,51 @@ namespace stdpp::event {
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
-            std::unique_lock _(cb_mutex);
-            if (!callbacks.contains(key)) {
-                return;
-            }
+            {
+                std::unique_lock _(cb_mutex);
+                if (!callbacks.contains(key)) {
+                    return;
+                }
 
-            std::erase_if(callbacks[key],
-                          [&](std::shared_ptr<Node> node) {
-                              auto p = node->func.template target<FuncT*>();
-                              return p && *p == func;
-                          });
-        }
-
-        auto remove(FuncT* func) -> void {
-            std::unique_lock _(cb_mutex);
-            for (auto& dispatcher : callbacks | std::views::values) {
-                std::erase_if(dispatcher,
+                auto& callback_vec = callbacks[key];
+                std::erase_if(callback_vec,
                               [&](std::shared_ptr<Node> node) {
                                   auto p = node->func.template target<FuncT*>();
                                   return p && *p == func;
                               });
             }
+
+            clear_callbacks();
+        }
+
+        auto remove(FuncT* func) -> void {
+            {
+                std::unique_lock _(cb_mutex);
+                for (auto& dispatcher : callbacks | std::views::values) {
+                    std::erase_if(dispatcher,
+                                  [&](std::shared_ptr<Node> node) {
+                                      auto p = node->func.template target<FuncT*>();
+                                      return p && *p == func;
+                                  });
+                }
+            }
+
+            clear_callbacks();
         }
 
         auto remove(const Key& key) -> void {
-            std::unique_lock _(cb_mutex);
-            if (!callbacks.contains(key)) {
-                return;
+            {
+                std::unique_lock _(cb_mutex);
+                if (!callbacks.contains(key)) {
+                    return;
+                }
+                callbacks.erase(key);
+                if (!queues.contains(key)) {
+                    return;
+                }
+                queues.erase(key);
             }
-            callbacks.erase(key);
+            clear_callbacks();
         }
 
         auto remove(const Handle& handle) -> void {
@@ -716,24 +762,31 @@ namespace stdpp::event {
                 return;
             }
 
-            std::unique_lock _(cb_mutex);
-            for (auto& dispatcher : callbacks | std::views::values) {
-                std::erase_if(dispatcher,
-                              [&](const std::shared_ptr<Node>& node) {
-                                  if (!handle.node.expired()) {
-                                      return node == target;
-                                  }
-                                  return false;
-                              });
+            {
+                std::unique_lock _(cb_mutex);
+                for (auto& dispatcher : callbacks | std::views::values) {
+                    std::erase_if(dispatcher,
+                                  [&](const std::shared_ptr<Node>& node) {
+                                      if (!handle.node.expired()) {
+                                          return node == target;
+                                      }
+                                      return false;
+                                  });
+                }
             }
+
+            clear_callbacks();
         }
 
         template<typename... Args>
         auto enqueue(const Key& key, Args&&... args) -> void {
             static_assert(std::is_same_v<std::tuple<std::decay_t<Args>...>, ArgsTuple>, "enqueue args must match FuncT signature");
 
-            std::unique_lock _(queue_mutex);
-            queues[key].emplace(std::forward<Args>(args)...);
+            std::unique_lock _(cb_mutex);
+            if (callbacks.contains(key)) {
+                std::unique_lock _(queue_mutex);
+                queues[key].emplace(std::forward<Args>(args)...);
+            }
         }
 
         auto operator()(const Key& key) -> size_t {
@@ -746,6 +799,7 @@ namespace stdpp::event {
                     return 0;
                 }
                 std::swap(local, it->second);
+                queues.erase(key);
             }
 
             std::vector<std::shared_ptr<Node>> targets;
@@ -759,7 +813,6 @@ namespace stdpp::event {
             }
 
             size_t processed = 0;
-
             while (!local.empty()) {
                 auto args = std::move(local.front());
                 local.pop();
@@ -767,19 +820,15 @@ namespace stdpp::event {
                 for (auto& n : targets) {
                     std::apply([&](auto&&... unpacked) {
                                    try {
+                                       std::unique_lock lk(n->mutex);
+                                       if (n->results.size() >= MaxResults) {
+                                           n->results.pop();
+                                       }
                                        if constexpr (is_void) {
                                            n->func(unpacked...);
-                                           std::unique_lock lk(n->mutex);
-                                           if (n->results.size() >= MaxResults) {
-                                               n->results.pop();
-                                           }
                                            n->results.push(true);
                                        } else {
                                            auto r = n->func(unpacked...);
-                                           std::unique_lock lk(n->mutex);
-                                           if (n->results.size() >= MaxResults) {
-                                               n->results.pop();
-                                           }
                                            n->results.push(std::move(r));
                                        }
                                    } catch (...) {
@@ -807,5 +856,27 @@ namespace stdpp::event {
 
         std::shared_mutex queue_mutex;
         std::unordered_map<Key, std::queue<ArgsTuple>> queues;
+
+        auto clear_callbacks() -> void {
+            std::vector<Key> empty_keys;
+            std::shared_lock cb_lock(cb_mutex);
+            for (const auto& [key, calls] : callbacks) {
+                if (calls.empty()) {
+                    empty_keys.push_back(key);
+                }
+            }
+
+            if (!empty_keys.empty()) {
+                std::unique_lock queue_lock(queue_mutex);
+                for (const auto& key : empty_keys) {
+                    if (queues.contains(key)) {
+                        queues.erase(key);
+                    }
+                    if (callbacks.contains(key)) {
+                        callbacks.erase(key);
+                    }
+                }
+            }
+        }
     };
 }
