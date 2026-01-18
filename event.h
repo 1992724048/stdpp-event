@@ -1,5 +1,8 @@
 ﻿#pragma once
 
+// https://github.com/1992724048/stdpp-event/upload/main
+// 1.0.1
+
 #include <type_traits>
 #include <vector>
 #include <functional>
@@ -121,6 +124,30 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto operator+=(T* func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+(T* func) -> Handle {
+            return append(func);
+        }
+
+        auto operator-=(T* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-(T* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
         }
 
         auto remove(T* func) -> void {
@@ -276,6 +303,69 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        [[nodiscard]] auto subscribe(FuncT* func) -> Handle {
+            auto node = std::make_shared<Node>(std::move(Func(func)));
+
+            {
+                std::unique_lock _(mutex);
+                for (auto& dispatcher : dispatchers) {
+                    dispatcher.push_back(node);
+                }
+            }
+
+            Handle h;
+            h.node = node;
+            return h;
+        }
+
+        auto operator+=(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+=(FuncT* func) -> Handle {
+            return subscribe(func);
+        }
+
+        auto operator+(FuncT* func) -> Handle {
+            return subscribe(func);
+        }
+
+        auto operator-=(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-=(std::pair<Key, FuncT*> pair) -> void {
+            return remove(pair.first, pair.second);
+        }
+
+        auto operator-(std::pair<Key, FuncT*> pair) -> void {
+            return remove(pair.first, pair.second);
+        }
+
+        auto operator-=(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
@@ -505,6 +595,30 @@ namespace stdpp::event {
             return h;
         }
 
+        auto operator+=(FuncT* func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+(FuncT* func) -> Handle {
+            return append(func);
+        }
+
+        auto operator-=(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
         auto remove(FuncT* func) -> void {
             std::unique_lock _(cb_mutex);
             for (auto& callback : callbacks | std::views::values) {
@@ -706,6 +820,54 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
+        }
+
+        auto operator+=(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+=(FuncT* func) -> Handle {
+            return subscribe(func);
+        }
+
+        auto operator+(FuncT* func) -> Handle {
+            return subscribe(func);
+        }
+
+        auto operator-=(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-(FuncT* func) -> void {
+            return remove(func);
+        }
+
+        auto operator-=(std::pair<Key, FuncT*> pair) -> void {
+            return remove(pair.first, pair.second);
+        }
+
+        auto operator-(std::pair<Key, FuncT*> pair) -> void {
+            return remove(pair.first, pair.second);
+        }
+
+        auto operator-=(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
