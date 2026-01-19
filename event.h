@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.1
+// 1.0.2
 
 #include <type_traits>
 #include <vector>
@@ -27,6 +27,87 @@ namespace stdpp::event {
     template<typename R, typename... Args>
     struct FnArgs<R(Args...)> {
         using Tuple = std::tuple<std::decay_t<Args>...>;
+    };
+
+    template<typename R, typename... Args>
+    class FastEvent<R(Args...)> {
+    public:
+        using Func = R(*)(Args...);
+
+        struct Handle {
+            uint32_t index;
+            uint32_t generation;
+        };
+
+        explicit FastEvent(size_t capacity = 32) {
+            slots.reserve(capacity);
+            free_list.reserve(capacity);
+        }
+
+        auto append(Func f) -> Handle {
+            if (!free_list.empty()) {
+                uint32_t idx = free_list.back();
+                free_list.pop_back();
+                auto& s = slots[idx];
+                s.func = f;
+                return {idx, s.generation};
+            }
+
+            const uint32_t idx = static_cast<uint32_t>(slots.size());
+            slots.push_back({f, 0});
+            return {idx, 0};
+        }
+
+        auto remove(Handle h) -> void {
+            if (h.index >= slots.size()) {
+                return;
+            }
+            auto& s = slots[h.index];
+            if (s.generation != h.generation) {
+                return;
+            }
+
+            s.func = nullptr;
+            ++s.generation;
+            free_list.push_back(h.index);
+        }
+
+        auto operator()(Args... args) noexcept -> void {
+            for (auto& s : slots) {
+                if (s.func) {
+                    s.func(args...);
+                }
+            }
+        }
+
+        auto operator+=(const Func func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+(const Func func) -> Handle {
+            return append(func);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto size() const noexcept -> size_t {
+            return slots.size() - free_list.size();
+        }
+
+    private:
+        struct Slot {
+            Func func;
+            uint32_t generation;
+        };
+
+        std::vector<Slot> slots;
+        std::vector<uint32_t> free_list;
     };
 
     template<typename T> requires std::is_function_v<T>
@@ -203,6 +284,10 @@ namespace stdpp::event {
                 n->cv.notify_all();
             }
             return count;
+        }
+
+        auto size() const noexcept -> size_t {
+            return nodes.size();
         }
 
     private:
@@ -470,6 +555,10 @@ namespace stdpp::event {
             return count;
         }
 
+        auto size() const noexcept -> size_t {
+            return dispatchers.size();
+        }
+
     private:
         mutable std::shared_mutex mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> dispatchers;
@@ -712,6 +801,14 @@ namespace stdpp::event {
             }
 
             return count;
+        }
+
+        auto size() const noexcept -> size_t {
+            return callbacks.size();
+        }
+
+        auto queue_size() const noexcept -> size_t {
+            return queue.size();
         }
 
     private:
@@ -1012,6 +1109,14 @@ namespace stdpp::event {
             return processed;
         }
 
+        auto size() const noexcept -> size_t {
+            return callbacks.size();
+        }
+
+        auto queue_size() const noexcept -> size_t {
+            return queues.size();
+        }
+
     private:
         std::shared_mutex cb_mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> callbacks;
@@ -1042,4 +1147,3 @@ namespace stdpp::event {
         }
     };
 }
-
