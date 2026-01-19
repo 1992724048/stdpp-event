@@ -9,6 +9,7 @@
 * Key-based event dispatching (`Dispatcher`)
 * Queued batched event processing (`EventQueue`)
 * Combined queue + dispatch model (`QueueDispatcher`)
+* High-frequency, lock-free event invocation path (`FastEvent`)
 
 All components support:
 
