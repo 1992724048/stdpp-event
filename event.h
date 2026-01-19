@@ -30,7 +30,7 @@ namespace stdpp::event {
     };
 
     template<typename R, typename... Args>
-    class FastEvent<R(Args...)> {
+    class FastEvent {
     public:
         using Func = R(*)(Args...);
 
@@ -1147,3 +1147,4 @@ namespace stdpp::event {
         }
     };
 }
+
