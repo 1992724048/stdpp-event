@@ -1,16 +1,19 @@
-﻿#pragma once
+﻿// 遂沫 event.h
+// 2026-02-18 17:22:37
+
+#pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.2
+// 1.0.3
 
-#include <type_traits>
-#include <vector>
 #include <functional>
-#include <unordered_map>
-#include <queue>
-#include <shared_mutex>
 #include <optional>
+#include <queue>
 #include <ranges>
+#include <shared_mutex>
+#include <type_traits>
+#include <unordered_map>
+#include <vector>
 
 namespace stdpp::event {
     template<typename>
@@ -1147,4 +1150,3 @@ namespace stdpp::event {
         }
     };
 }
-
