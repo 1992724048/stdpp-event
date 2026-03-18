@@ -1,10 +1,10 @@
 // 遂沫 event.h
-// 2026-03-18 22:27:53
+// 2026-03-18 23:00:07
 
 #pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.4
+// 1.0.5
 
 #include <functional>
 #include <optional>
@@ -196,10 +196,10 @@ namespace stdpp::event {
             std::weak_ptr<Node> node;
         };
 
-        [[nodiscard]] auto append(T* func) -> Handle {
+        [[nodiscard]] auto append(Func func) -> Handle {
             std::unique_lock _(mutex);
 
-            auto node = std::make_shared<Node>(Func(func));
+            auto node = std::make_shared<Node>(std::move(func));
             nodes.push_back(node);
 
             Handle h;
@@ -207,20 +207,36 @@ namespace stdpp::event {
             return h;
         }
 
+        [[nodiscard]] auto append(Func& func) -> Handle {
+            return append(Func(func));
+        }
+
+        [[nodiscard]] auto append(T* func) -> Handle {
+            return append(Func(func));
+        }
+
         auto operator+=(T* func) -> Handle {
-            return append(func);
+            return append(Func(func));
         }
 
         auto operator+(T* func) -> Handle {
+            return append(Func(func));
+        }
+
+        auto operator+=(Func func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+(Func func) -> Handle {
             return append(func);
         }
 
         auto operator-=(T* func) -> void {
-            return remove(func);
+            return remove(Func(func));
         }
 
         auto operator-(T* func) -> void {
-            return remove(func);
+            return remove(Func(func));
         }
 
         auto operator-=(const Handle& handle) -> void {
@@ -374,8 +390,8 @@ namespace stdpp::event {
             std::weak_ptr<Node> node;
         };
 
-        [[nodiscard]] auto subscribe(const Key& key, FuncT* func) -> Handle {
-            auto node = std::make_shared<Node>(std::move(Func(func)));
+        [[nodiscard]] auto subscribe(const Key& key, Func func) -> Handle {
+            auto node = std::make_shared<Node>(std::move(func));
 
             {
                 std::unique_lock _(mutex);
@@ -387,8 +403,12 @@ namespace stdpp::event {
             return h;
         }
 
-        [[nodiscard]] auto subscribe(FuncT* func) -> Handle {
-            auto node = std::make_shared<Node>(std::move(Func(func)));
+        [[nodiscard]] auto subscribe(const Key& key, FuncT* func) -> Handle {
+            return subscribe(key, Func(func));
+        }
+
+        [[nodiscard]] auto subscribe(Func func) -> Handle {
+            auto node = std::make_shared<Node>(std::move(func));
 
             {
                 std::unique_lock _(mutex);
@@ -402,11 +422,23 @@ namespace stdpp::event {
             return h;
         }
 
+        [[nodiscard]] auto subscribe(FuncT* func) -> Handle {
+            return subscribe(Func(func));
+        }
+
         auto operator+=(std::pair<Key, FuncT*> pair) -> Handle {
             return subscribe(pair.first, pair.second);
         }
 
         auto operator+(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+=(std::pair<Key, Func> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+(std::pair<Key, Func> pair) -> Handle {
             return subscribe(pair.first, pair.second);
         }
 
@@ -416,6 +448,22 @@ namespace stdpp::event {
 
         auto operator-(std::pair<Key, FuncT*> pair) -> void {
             return remove(pair.first, pair.second);
+        }
+
+        auto operator-=(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-(Key key) -> void {
+            return remove(key);
+        }
+
+        auto operator-=(const Handle& handle) -> void {
+            return remove(handle);
+        }
+
+        auto operator-(const Handle& handle) -> void {
+            return remove(handle);
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
@@ -578,7 +626,7 @@ namespace stdpp::event {
                     return out;
                 }
 
-                std::unique_lock lk(n->mutex);
+                std::unique_lock _(n->mutex);
 
                 while (!n->results.empty()) {
                     if constexpr (is_void) {
@@ -633,8 +681,8 @@ namespace stdpp::event {
             std::weak_ptr<Node> node;
         };
 
-        [[nodiscard]] auto append(FuncT* func) -> Handle {
-            auto node = std::make_shared<Node>(Func(func));
+        [[nodiscard]] auto append(Func func) -> Handle {
+            auto node = std::make_shared<Node>(func);
 
             {
                 std::unique_lock _(cb_mutex);
@@ -646,11 +694,23 @@ namespace stdpp::event {
             return h;
         }
 
+        [[nodiscard]] auto append(FuncT* func) -> Handle {
+            return append(Func(func));
+        }
+
         auto operator+=(FuncT* func) -> Handle {
             return append(func);
         }
 
         auto operator+(FuncT* func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+=(Func func) -> Handle {
+            return append(func);
+        }
+
+        auto operator+(Func func) -> Handle {
             return append(func);
         }
 
@@ -865,8 +925,8 @@ namespace stdpp::event {
             std::weak_ptr<Node> node;
         };
 
-        [[nodiscard]] auto subscribe(const Key& key, FuncT* func) -> Handle {
-            auto node = std::make_shared<Node>(Func(func));
+        [[nodiscard]] auto subscribe(const Key& key, Func func) -> Handle {
+            auto node = std::make_shared<Node>(func);
 
             {
                 std::unique_lock _(cb_mutex);
@@ -878,11 +938,23 @@ namespace stdpp::event {
             return h;
         }
 
+        [[nodiscard]] auto subscribe(const Key& key, FuncT* func) -> Handle {
+            return subscribe(key, Func(func));
+        }
+
         auto operator+=(std::pair<Key, FuncT*> pair) -> Handle {
             return subscribe(pair.first, pair.second);
         }
 
         auto operator+(std::pair<Key, FuncT*> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+=(std::pair<Key, Func> pair) -> Handle {
+            return subscribe(pair.first, pair.second);
+        }
+
+        auto operator+(std::pair<Key, Func> pair) -> Handle {
             return subscribe(pair.first, pair.second);
         }
 
