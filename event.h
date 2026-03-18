@@ -1,10 +1,10 @@
-﻿// 遂沫 event.h
-// 2026-02-18 17:22:37
+// 遂沫 event.h
+// 2026-03-18 22:27:53
 
 #pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.3
+// 1.0.4
 
 #include <functional>
 #include <optional>
@@ -102,7 +102,6 @@ namespace stdpp::event {
         auto size() const noexcept -> size_t {
             return slots.size() - free_list.size();
         }
-
     private:
         struct Slot {
             Func func;
@@ -129,7 +128,6 @@ namespace stdpp::event {
             std::atomic<uint64_t> seq = 0;
             std::conditional_t<is_void, bool, std::optional<Ret>> last_value{};
         };
-
     public:
         class Handle {
         public:
@@ -193,7 +191,6 @@ namespace stdpp::event {
                            });
                 return true;
             }
-
         private:
             friend class Event;
             std::weak_ptr<Node> node;
@@ -292,7 +289,6 @@ namespace stdpp::event {
         auto size() const noexcept -> size_t {
             return nodes.size();
         }
-
     private:
         std::shared_mutex mutex;
         std::vector<std::shared_ptr<Node>> nodes;
@@ -314,7 +310,6 @@ namespace stdpp::event {
             std::atomic<uint64_t> seq = 0;
             std::conditional_t<is_void, bool, std::optional<Ret>> last_value{};
         };
-
     public:
         class Handle {
         public:
@@ -374,7 +369,6 @@ namespace stdpp::event {
                            });
                 return true;
             }
-
         private:
             friend class Dispatcher;
             std::weak_ptr<Node> node;
@@ -416,44 +410,12 @@ namespace stdpp::event {
             return subscribe(pair.first, pair.second);
         }
 
-        auto operator+=(FuncT* func) -> Handle {
-            return subscribe(func);
-        }
-
-        auto operator+(FuncT* func) -> Handle {
-            return subscribe(func);
-        }
-
-        auto operator-=(FuncT* func) -> void {
-            return remove(func);
-        }
-
-        auto operator-(FuncT* func) -> void {
-            return remove(func);
-        }
-
         auto operator-=(std::pair<Key, FuncT*> pair) -> void {
             return remove(pair.first, pair.second);
         }
 
         auto operator-(std::pair<Key, FuncT*> pair) -> void {
             return remove(pair.first, pair.second);
-        }
-
-        auto operator-=(Key key) -> void {
-            return remove(key);
-        }
-
-        auto operator-(Key key) -> void {
-            return remove(key);
-        }
-
-        auto operator-=(const Handle& handle) -> void {
-            return remove(handle);
-        }
-
-        auto operator-(const Handle& handle) -> void {
-            return remove(handle);
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
@@ -561,7 +523,6 @@ namespace stdpp::event {
         auto size() const noexcept -> size_t {
             return dispatchers.size();
         }
-
     private:
         mutable std::shared_mutex mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> dispatchers;
@@ -601,7 +562,6 @@ namespace stdpp::event {
             std::condition_variable_any cv;
             std::conditional_t<is_void, std::queue<bool>, std::queue<std::optional<Ret>>> results;
         };
-
     public:
         class Handle {
         public:
@@ -668,7 +628,6 @@ namespace stdpp::event {
                            });
                 return true;
             }
-
         private:
             friend class EventQueue;
             std::weak_ptr<Node> node;
@@ -813,7 +772,6 @@ namespace stdpp::event {
         auto queue_size() const noexcept -> size_t {
             return queue.size();
         }
-
     private:
         std::shared_mutex cb_mutex;
         std::vector<std::shared_ptr<Node>> callbacks;
@@ -838,7 +796,6 @@ namespace stdpp::event {
             std::condition_variable_any cv;
             std::conditional_t<is_void, std::queue<bool>, std::queue<std::optional<Ret>>> results;
         };
-
     public:
         class Handle {
         public:
@@ -903,7 +860,6 @@ namespace stdpp::event {
                            });
                 return true;
             }
-
         private:
             friend class QueueDispatcher;
             std::weak_ptr<Node> node;
@@ -930,44 +886,12 @@ namespace stdpp::event {
             return subscribe(pair.first, pair.second);
         }
 
-        auto operator+=(FuncT* func) -> Handle {
-            return subscribe(func);
-        }
-
-        auto operator+(FuncT* func) -> Handle {
-            return subscribe(func);
-        }
-
-        auto operator-=(FuncT* func) -> void {
-            return remove(func);
-        }
-
-        auto operator-(FuncT* func) -> void {
-            return remove(func);
-        }
-
         auto operator-=(std::pair<Key, FuncT*> pair) -> void {
             return remove(pair.first, pair.second);
         }
 
         auto operator-(std::pair<Key, FuncT*> pair) -> void {
             return remove(pair.first, pair.second);
-        }
-
-        auto operator-=(Key key) -> void {
-            return remove(key);
-        }
-
-        auto operator-(Key key) -> void {
-            return remove(key);
-        }
-
-        auto operator-=(const Handle& handle) -> void {
-            return remove(handle);
-        }
-
-        auto operator-(const Handle& handle) -> void {
-            return remove(handle);
         }
 
         auto remove(const Key& key, FuncT* func) -> void {
@@ -1119,7 +1043,6 @@ namespace stdpp::event {
         auto queue_size() const noexcept -> size_t {
             return queues.size();
         }
-
     private:
         std::shared_mutex cb_mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> callbacks;
