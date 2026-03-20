@@ -4,7 +4,7 @@
 #pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.6
+// 1.0.7
 
 #include <functional>
 #include <optional>
@@ -206,10 +206,6 @@ namespace stdpp::event {
             Handle h;
             h.node = node;
             return h;
-        }
-
-        [[nodiscard]] auto append(Func& func) -> Handle {
-            return append(Func(func));
         }
 
         [[nodiscard]] auto append(T* func) -> Handle {
