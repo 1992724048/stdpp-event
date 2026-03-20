@@ -4,7 +4,7 @@
 #pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.0.5
+// 1.0.6
 
 #include <functional>
 #include <optional>
@@ -114,9 +114,10 @@ namespace stdpp::event {
 
     template<typename T> requires std::is_function_v<T>
     class Event {
+    public:
         using Func = std::function<T>;
         using Ret = FnRet<T>::Type;
-
+    private:
         static constexpr bool is_void = std::is_void_v<Ret>;
 
         struct Node {
@@ -312,9 +313,10 @@ namespace stdpp::event {
 
     template<typename Key, typename FuncT> requires std::is_function_v<FuncT>
     class Dispatcher {
+    public:
         using Func = std::function<FuncT>;
         using Ret = FnRet<FuncT>::Type;
-
+    private:
         static constexpr bool is_void = std::is_void_v<Ret>;
 
         struct Node {
@@ -596,10 +598,11 @@ namespace stdpp::event {
 
     template<typename FuncT, size_t MaxResults = 1024> requires std::is_function_v<FuncT>
     class EventQueue {
+    public:
         using Func = std::function<FuncT>;
         using Ret = FnRet<FuncT>::Type;
         using ArgsTuple = FnArgs<FuncT>::Tuple;
-
+    private:
         static constexpr bool is_void = std::is_void_v<Ret>;
 
         struct Node {
@@ -842,10 +845,11 @@ namespace stdpp::event {
 
     template<typename Key, typename FuncT, size_t MaxResults = 1024> requires std::is_function_v<FuncT>
     class QueueDispatcher {
+    public:
         using Func = std::function<FuncT>;
         using Ret = FnRet<FuncT>::Type;
         using ArgsTuple = FnArgs<FuncT>::Tuple;
-
+    private:
         static constexpr bool is_void = std::is_void_v<Ret>;
 
         struct Node {
