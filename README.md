@@ -1,135 +1,117 @@
+<p align="right">
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">中文</a>
+</p>
+
 # stdpp::event
 
-> A lightweight, type-safe, modern C++ event / callback / queue dispatching toolkit with asynchronous waiting support.
+A lightweight, type-safe, modern C++ event toolkit for callback aggregation, key-based dispatching, and queued batch processing with asynchronous waiting support.
 
-`stdpp::event` provides a set of **composable event primitives** designed to solve the following problems:
+It provides **five composable primitives** ranging from zero-overhead `FastEvent` to fully-thread-safe `QueueDispatcher`, all connected through a uniform `Handle` API.
 
-* Unified management and invocation of multiple callbacks
-* Collection and synchronization of callback execution results
-* Key-based event dispatching (`Dispatcher`)
-* Queued batched event processing (`EventQueue`)
-* Combined queue + dispatch model (`QueueDispatcher`)
-* High-frequency, lock-free event invocation path (`FastEvent`)
+## Table of Contents
 
-All components support:
-
-* **Thread safety**
-* **Asynchronous execution with synchronous waiting**
-* **Cached results (`last`)**
+- [Components](#components)
+- [FastEvent — Zero-Overhead Lightweight](#fastevent--zero-overhead-lightweight)
+- [Event — Aggregated Callbacks](#event--aggregated-callbacks)
+- [Dispatcher — Key-Based Dispatching](#dispatcher--key-based-dispatching)
+- [EventQueue — Buffered Batch Processing](#eventqueue--buffered-batch-processing)
+- [QueueDispatcher — Queued + Key-Based Dispatching](#queuedispatcher--queued--key-based-dispatching)
+- [Handle Semantics](#handle-semantics)
+- [Subscription Removal](#subscription-removal)
+- [Thread Safety](#thread-safety)
+- [Design Notes](#design-notes)
 
 ---
 
-## Features Overview
+## Components
 
-* `Event<Signature>`: Aggregated invocation of multiple callbacks
-* `Dispatcher<Key, Signature>`: Key-based event dispatching
-* `EventQueue<Signature>`: Parameterized queued batch processing
-* `QueueDispatcher<Key, Signature>`: Queued dispatching by key
-* Each subscription / callback owns a **Handle**
-* `wait()` / `last()` for synchronization and result retrieval
+| Component                          | Dispatch  | Queue      | Return Value              | Thread Safety | Overhead                   |
+| ---------------------------------- | --------- | ---------- | ------------------------- | ------------- | -------------------------- |
+| `FastEvent<R(Args...)>`            | broadcast | —          | ❌                        | ❌            | zero-overhead (raw fn ptr) |
+| `Event<R(Args...)>`                | broadcast | —          | `Handle::last()`          | ✅            | moderate                   |
+| `Dispatcher<Key, R(Args...)>`      | by key    | —          | `Handle::last()`          | ✅            | moderate                   |
+| `EventQueue<R(Args...)>`           | broadcast | ✅ enqueue | `Handle::last()` (vector) | ✅            | moderate                   |
+| `QueueDispatcher<Key, R(Args...)>` | by key    | ✅ enqueue | `Handle::last()` (vector) | ✅            | moderate                   |
+
+---
+
+## FastEvent — Zero-Overhead Lightweight
+
+> High-frequency, lock-free event invocation using **raw function pointers** with **generation-based slot reuse**.
+
+```cpp
+stdpp::event::FastEvent<void(int)> fast;
+
+auto h1 = fast.append([](int v) { /* ... */ });
+auto h2 = fast += [](int v) { /* ... */ };
+
+fast(42);          // invoke all callbacks
+fast.remove(h1);   // remove by Handle
+fast -= h2;        // remove by Handle
+```
+
+- Uses **raw function pointers** (`R(*)(Args...)`) — no `std::function` overhead
+- **Generation-based slot management** prevents ABA problems
+- `free_list` recycles removed slots
+- **Not thread-safe** — designed for single-threaded hot paths
+- Returns `void` only (no return value collection)
 
 ---
 
 ## Event — Aggregated Callbacks
 
-### Event with Return Value
+> Collect and invoke multiple callbacks, each with an individual return value.
 
 ```cpp
 stdpp::event::Event<int(int, int)> process;
 
-auto h1 = process.append([](int a, int b) {
-    return a + b;
-});
+auto h1 = process.append([](int a, int b) { return a + b; });
+auto h2 = process += [](int a, int b) { return a + b + a; };
 
-auto h2 = process += ([](int a, int b) {
-    return a + b + a;
-});
-
-// auto h2 = process + ([](int a, int b) {
-//     return a + b + a;
-// });
-```
-
-Asynchronous invocation with result synchronization:
-
-```cpp
+// Async invocation with result sync
 std::thread([&] {
     std::this_thread::sleep_for(5s);
-    auto invoked = process(1, 2);   // invoke all callbacks
+    process(1, 2);                // invoke all callbacks sequentially
 }).detach();
 
-h1.wait();                      // wait for execution
-
-auto r1 = h1.last();            // std::optional<int>
-auto r2 = h2.last();
+h1.wait();                        // wait for first execution
+auto r1 = h1.last();              // std::optional<int>
 ```
 
-* `process(1, 2)` invokes **all callbacks sequentially**
-* Each return value is cached in its corresponding `Handle`
-* `wait()` blocks until the first execution completes
+- `operator()` invokes all callbacks **sequentially**, returns the number invoked
+- Each callback's result is cached independently in its `Handle::last()`
+- `Handle::wait()` blocks until the next execution completes
+- Thread-safe: callback list is **snapshot-copied** under shared_lock before invocation
 
 ---
 
-### Sequential Callback Invocation
+## Dispatcher — Key-Based Dispatching
 
-`Event<std::string(int, int)>`
-
-```cpp
-stdpp::event::Event<std::string(int, int)> calls;
-
-calls.append([](int a, int b) -> std::string {
-    return std::to_string(a + b);
-});
-```
-
-```cpp
-std::thread([&] {
-    std::this_thread::sleep_for(3s);
-    calls();
-}).detach();
-
-h.wait();
-std::optional<std::string> str = h.last();
-```
-
----
-
-## Dispatcher — Key-Based Event Dispatching
+> Route events to different subscribers by key.
 
 ```cpp
 stdpp::event::Dispatcher<int, void(int)> disp;
 
 auto h = disp.subscribe(42, [](int x) {
-    TLOG << "Dispatcher got: " << x;
+    // handle event for key 42
 });
 
-// auto h = disp += {42, [](int x) {
-//     TLOG << "Dispatcher got: " << x;
-// }};
+disp(42, 7);               // trigger only subscribers of key 42
+
+disp.remove(42);           // remove all subscribers of key 42
+disp.remove(h);            // remove by Handle (precise)
 ```
 
-Trigger a specific key:
-
-```cpp
-std::thread([&] {
-    std::this_thread::sleep_for(3s);
-    disp(42, 7);      // only callbacks bound to key == 42
-}).detach();
-
-h.wait();
-```
-
-* A single key may have **multiple subscribers**
-* The return value is the **number of callbacks invoked**
+- A single key may have **multiple subscribers**
+- Supports **global subscribers** that receive events for all keys
+- `operator()` returns the number of callbacks invoked
+- `Handle::last()` and `Handle::wait()` work the same as `Event`
 
 ---
 
-> [!IMPORTANT]
-> ## Queue Waiting Semantics
-> **For `EventQueue` and `QueueDispatcher`, `wait()` operates on a per-event basis.**
-> This behavior is **different from `Event` and `Dispatcher`** and must be understood correctly.
+## EventQueue — Buffered Batch Processing
 
-## EventQueue — Buffered Batch Processing Queue
+> Enqueue events without immediate execution; process them in batches.
 
 ```cpp
 stdpp::event::EventQueue<std::string(std::string, bool)> queue;
@@ -137,231 +119,148 @@ stdpp::event::EventQueue<std::string(std::string, bool)> queue;
 auto h = queue.append([](std::string s, bool ok) {
     return ok ? std::move(s) : "";
 });
-```
 
-Enqueue data (buffered only, no execution):
-
-```cpp
-queue.enqueue("Hello", true);
+queue.enqueue("Hello", true);     // buffer only, no execution
 queue.enqueue("Hello", false);
-queue.enqueue("Hello", true);
-```
 
-Process the queue:
-
-```cpp
 std::thread([&] {
     std::this_thread::sleep_for(3s);
-    queue();   // process all queued items
+    queue();                       // process all queued items
 }).detach();
 
 h.wait();
-
-auto results = h.last();  // std::vector<std::string>
+auto results = h.last();           // std::vector<std::string>
 ```
 
-* Each queued item is passed to all callbacks
-* `last()` returns the **result set of the most recent batch**
+- `enqueue()` buffers arguments — **does not trigger anything**
+- `operator()` processes the queue in batch
+- `Handle::last()` drains all accumulated results at once
+- `MaxResults` template parameter controls the result queue capacity (default 1024)
 
 ---
 
 ## QueueDispatcher — Queued + Key-Based Dispatching
 
+> Combine key-based routing with queued batch processing.
+
 ```cpp
 stdpp::event::QueueDispatcher<int, int(int)> qd;
 
-auto h = qd.subscribe(1, [](int v) {
-    return v * 2;
-});
-```
+auto h = qd.subscribe(1, [](int v) { return v * 2; });
 
-Enqueue tasks with keys:
-
-```cpp
-qd.enqueue(1, 10);
+qd.enqueue(1, 10);                 // buffer under key 1
 qd.enqueue(1, 20);
 qd.enqueue(1, 30);
-```
 
-Process the queue:
-
-```cpp
 std::thread([&] {
     std::this_thread::sleep_for(3s);
-    qd(1);   // process only the queue for key == 1
+    qd(1);                         // process only queue for key 1
 }).detach();
 
 h.wait();
-
-auto results = h.last();  // {20, 40, 60}
+auto results = h.last();           // {20, 40, 60}
 ```
+
+- Combines `Dispatcher` routing + `EventQueue` buffering
+- Each key has its own event queue
+- Supports global subscriptions (no key)
 
 ---
 
 ## Handle Semantics
 
-Each call to `append()` or `subscribe()` returns a **Handle**:
+Every call to `append()` / `subscribe()` returns a **Handle**:
 
 ```cpp
-auto h = callback.append(...);
+auto h = event.append(callback);
 ```
 
-The `Handle` provides:
+| API             | Description                               |
+| --------------- | ----------------------------------------- |
+| `wait()`        | Block until the next execution completes  |
+| `wait(timeout)` | Block with timeout                        |
+| `last()`        | Retrieve the most recent execution result |
+| Auto-unbind     | Automatically unsubscribed on destruction |
 
-| API         | Description                               |
-| ----------- | ----------------------------------------- |
-| `wait()`    | Block until the next execution completes  |
-| `last()`    | Retrieve the most recent execution result |
-| Auto-unbind | Automatically unsubscribed on destruction |
----
+**Important `wait()` semantics by component:**
 
-## Remove / Unsubscribe
+| Component                        | `wait()` means                                |
+| -------------------------------- | --------------------------------------------- |
+| `Event` / `Dispatcher`           | Waits for **one full invocation** to complete |
+| `EventQueue` / `QueueDispatcher` | Waits for **one queued item** to complete     |
 
-All event types support **explicit removal of callbacks**, allowing manual lifetime control or early unbinding.
+> For queue-based components, `wait()` unblocks as soon as **any one** queued item finishes. Use a loop to drain the entire batch:
+>
+> ```cpp
+> for (int i = 0; i < 3; ++i) {
+>     h.wait();
+>     auto r = h.last();
+> }
+> ```
 
----
-
-### Event — Removing Callbacks
-
-```cpp
-stdpp::event::Event<int(int)> ev;
-
-auto h = ev.append(&foo);
-```
-
-Two removal methods are supported:
-
-#### 1. Remove by Function Pointer
-
-```cpp
-ev.remove(&foo);
-// ev - &foo;
-// ev -= &foo;
-```
-
-* Removes **all callbacks** whose target function equals `&foo`
-* Suitable for free functions or static member functions
-
-#### 2. Remove by Handle (Recommended)
-
-```cpp
-ev.remove(h);
-```
-
-* Precisely removes the specific subscription represented by the handle
-* Does **not** depend on function identity
-* Fully **thread-safe**
-
-> Note:
-> `Handle` internally holds a weak reference.
-> If the handle is already expired (event destroyed or previously removed),
-> `remove(handle)` becomes a no-op.
+**Handle internally holds a `weak_ptr`** — it never extends the lifetime of the callback node. If the event is destroyed or the callback removed, all Handle operations become safe no-ops.
 
 ---
 
-### Dispatcher — Removing Subscriptions
+## Subscription Removal
+
+All components support removal by **function pointer** or by **Handle**:
 
 ```cpp
-stdpp::event::Dispatcher<int, void(int)> disp;
-auto h = disp.subscribe(42, &on_event);
+// By function pointer (removes all matching callbacks)
+event.remove(&my_func);
+event -= &my_func;
+
+// By Handle (precise, recommended)
+event.remove(h);
+event -= h;
 ```
 
-Supported removal forms:
+### Dispatcher-specific removal
 
 ```cpp
-disp.remove(42, &on_event);   // remove this function under key == 42
-disp.remove(&on_event);       // remove this function from all keys
-disp.remove(42);              // remove all callbacks bound to key == 42
-disp.remove(h);               // remove by Handle (precise)
+disp.remove(42, &my_func);   // remove under specific key
+disp.remove(&my_func);       // remove from all keys
+disp.remove(42);              // remove entire key
+disp.remove(h);               // by Handle
 ```
 
----
-
-### EventQueue / QueueDispatcher — Removing Callbacks
+### Queue-based removal
 
 ```cpp
-auto h = queue.append(&process);
 queue.remove(&process);
 queue.remove(h);
-```
 
-```cpp
-auto h = qd.subscribe(1, &process);
 qd.remove(1, &process);
 qd.remove(&process);
 qd.remove(1);
 qd.remove(h);
 ```
 
-* Removal only affects **future executions**
-* Items already enqueued but not yet processed will be ignored if no callbacks remain
+- Removal only affects **future executions**
+- Items already enqueued but not yet processed are skipped if no callbacks remain
 
 ---
 
-### Core Rule
+## Thread Safety
 
-**Each queued item (`enqueue`) produces one waitable completion event per callback.**
+| Operation             | Lock                                            | Details                  |
+| --------------------- | ----------------------------------------------- | ------------------------ |
+| Add / remove callback | `unique_lock(mutex)`                            | Exclusive write          |
+| Invoke (`operator()`) | `shared_lock(mutex)` + snapshot copy            | Concurrent reads allowed |
+| Read `last()`         | `shared_lock(node->mutex)`                      | Non-blocking             |
+| Write `last()`        | `unique_lock(node->mutex)`                      | During invocation        |
+| `wait()`              | `unique_lock(node->mutex)` + condition variable |                          |
+| `enqueue()`           | `unique_lock(queue_mutex)`                      | Queue only               |
 
-That means:
-
-* `enqueue()` → **does not trigger anything**
-* `operator()()` processes queued items
-* **Each processed item pushes exactly one result per callback**
-* `wait()` waits until **at least one result is available**
-* `last()` **consumes and clears all currently available results**
-
----
-
-### Example: Per-Event Waiting
-
-```cpp
-stdpp::event::EventQueue<int(int)> q;
-
-auto h = q.append([](int v) {
-    return v * 2;
-});
-
-q.enqueue(1);
-q.enqueue(2);
-q.enqueue(3);
-
-std::thread([&] {
-    q();   // processes 3 queued events
-}).detach();
-```
-
-#### Correct Waiting Pattern
-
-```cpp
-for (int i = 0; i < 3; ++i) {
-    h.wait();           // waits for one event to complete
-    auto r = h.last();  // consumes available results
-}
-```
+> **Exception safety:** `operator()` wraps each callback invocation in try-catch. If a callback throws, `last_value` is reset and execution continues with the next callback.
 
 ---
 
-### Common Misconception
-```cpp
-h.wait();
-auto all = h.last();   // does NOT guarantee the entire queue is done
-```
+## Design Notes
 
-Reason:
-
-* `wait()` unblocks as soon as **any result becomes available**
-* The first processed event is sufficient to wake it
-* Remaining events may still be running
-
----
-
-### Correct Mental Model
-
-| Component         | Meaning of `wait()`                          |
-| ----------------- | -------------------------------------------- |
-| `Event`           | Waits for the **next full invocation**       |
-| `Dispatcher`      | Waits until **this subscriber is triggered** |
-| `EventQueue`      | Waits for **one queued event to complete**   |
-| `QueueDispatcher` | Waits for **one queued event under a key**   |
-
-
+- Header-only C++17, no external dependencies beyond the standard library
+- `Handle` uses `weak_ptr` internally — safe against dangling references
+- `FastEvent` uses raw function pointers + generation-based slots for zero-overhead hot paths
+- Queue-based components have a `MaxResults` template parameter (default 1024); oldest results are evicted when the limit is reached
+- Callback list is snapshot-copied on invocation — adding/removing during dispatch is safe and takes effect next time
