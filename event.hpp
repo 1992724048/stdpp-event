@@ -1,18 +1,25 @@
-﻿// 遂沫 event.h
-// 2026-03-18 23:00:07
+﻿// 2026-08-02 18:33:29
 
 #pragma once
 
 // https://github.com/1992724048/stdpp-event
-// 1.1.0
+// 1.3.0
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <queue>
 #include <ranges>
 #include <shared_mutex>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace stdpp::event {
@@ -84,6 +91,27 @@ namespace stdpp::event {
             return node_.lock();
         }
     public:
+        [[nodiscard]] auto seq() const -> uint64_t {
+            auto n = lock_node();
+            if (!n) {
+                return 0;
+            }
+            return n->seq.load();
+        }
+
+        [[nodiscard]] auto wait_until(uint64_t target) const -> bool {
+            auto n = lock_node();
+            if (!n) {
+                return false;
+            }
+            std::unique_lock lk(n->mutex);
+            n->cv.wait(lk,
+                       [&] -> auto {
+                           return n->seq.load() >= target;
+                       });
+            return true;
+        }
+
         template<class Rep, class Period>
         [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
             auto n = lock_node();
@@ -91,11 +119,11 @@ namespace stdpp::event {
                 return false;
             }
             std::unique_lock lk(n->mutex);
-            auto start_seq = n->seq.load();
+            const auto start_seq = n->seq.load();
             return n->cv.wait_for(lk,
                                   timeout,
                                   [&] -> auto {
-                                      return n->seq != start_seq;
+                                      return n->seq.load() >= start_seq + 1;
                                   });
         }
 
@@ -105,10 +133,10 @@ namespace stdpp::event {
                 return false;
             }
             std::unique_lock lk(n->mutex);
-            auto start_seq = n->seq.load();
+            const auto start_seq = n->seq.load();
             n->cv.wait(lk,
                        [&] -> auto {
-                           return n->seq != start_seq;
+                           return n->seq.load() >= start_seq + 1;
                        });
             return true;
         }
@@ -126,6 +154,27 @@ namespace stdpp::event {
             return node_.lock();
         }
     public:
+        [[nodiscard]] auto seq() const -> uint64_t {
+            auto n = lock_node();
+            if (!n) {
+                return 0;
+            }
+            return n->seq.load();
+        }
+
+        [[nodiscard]] auto wait_until(uint64_t target) const -> bool {
+            auto n = lock_node();
+            if (!n) {
+                return false;
+            }
+            std::unique_lock lk(n->mutex);
+            n->cv.wait(lk,
+                       [&] -> auto {
+                           return n->seq.load() >= target;
+                       });
+            return true;
+        }
+
         template<class Rep, class Period>
         [[nodiscard]] auto wait(std::chrono::duration<Rep, Period> timeout) const -> bool {
             auto n = lock_node();
@@ -133,11 +182,11 @@ namespace stdpp::event {
                 return false;
             }
             std::unique_lock lk(n->mutex);
-            auto start_seq = n->seq.load();
+            const auto start_seq = n->seq.load();
             return n->cv.wait_for(lk,
                                   timeout,
                                   [&] -> auto {
-                                      return n->seq != start_seq;
+                                      return n->seq.load() >= start_seq + 1;
                                   });
         }
 
@@ -147,10 +196,10 @@ namespace stdpp::event {
                 return false;
             }
             std::unique_lock lk(n->mutex);
-            auto start_seq = n->seq.load();
+            const auto start_seq = n->seq.load();
             n->cv.wait(lk,
                        [&] -> auto {
-                           return n->seq != start_seq;
+                           return n->seq.load() >= start_seq + 1;
                        });
             return true;
         }
@@ -159,7 +208,7 @@ namespace stdpp::event {
     template<typename R, typename... Args>
     class FastEvent {
     public:
-        using Func = R(*)(Args...);
+        using Func = R (*)(Args...);
 
         struct Handle {
             uint32_t index;
@@ -177,12 +226,12 @@ namespace stdpp::event {
                 free_list.pop_back();
                 auto& s = slots[idx];
                 s.func = f;
-                return {idx, s.generation};
+                return {.index = idx, .generation = s.generation};
             }
 
             const auto idx = static_cast<uint32_t>(slots.size());
             slots.push_back({f, 0});
-            return {idx, 0};
+            return {.index = idx, .generation = 0};
         }
 
         auto remove(Handle h) -> void {
@@ -202,10 +251,13 @@ namespace stdpp::event {
             free_list.push_back(h.index);
         }
 
-        auto operator()(Args... args) noexcept -> void {
-            for (auto& s : slots) {
+        auto operator()(Args... args) -> void {
+            for (size_t i = 0; i < slots.size(); ++i) {
+                auto& s = slots[i];
                 if (s.func) {
-                    s.func(args...);
+                    try {
+                        s.func(args...);
+                    } catch (...) {}
                 }
             }
         }
@@ -233,13 +285,13 @@ namespace stdpp::event {
         std::vector<uint32_t> free_list;
     };
 
-    template<typename T> requires std::is_function_v<T>
+    template<typename FuncT> requires std::is_function_v<FuncT>
     class Event {
     public:
-        using Func = std::function<T>;
-        using Ret = FnRet<T>::Type;
+        using Func = std::function<FuncT>;
+        using Ret = FnRet<FuncT>::Type;
     private:
-        using Node = EventNode<T>;
+        using Node = EventNode<FuncT>;
         static constexpr bool is_void = Node::is_void;
     public:
         class Handle : public SeqHandleBase<Node> {
@@ -272,11 +324,11 @@ namespace stdpp::event {
             return h;
         }
 
-        [[nodiscard]] auto append(T* func) -> Handle {
+        [[nodiscard]] auto append(FuncT* func) -> Handle {
             return append(Func(func));
         }
 
-        auto operator+=(T* func) -> Handle {
+        auto operator+=(FuncT* func) -> Handle {
             return append(Func(func));
         }
 
@@ -284,19 +336,19 @@ namespace stdpp::event {
             return append(func);
         }
 
-        auto operator-=(T* func) -> void {
-            return remove(Func(func));
+        auto operator-=(FuncT* func) -> void {
+            return remove(func);
         }
 
         auto operator-=(const Handle& handle) -> void {
             return remove(handle);
         }
 
-        auto remove(T* func) -> void {
+        auto remove(FuncT* func) -> void {
             std::unique_lock _(mutex);
             std::erase_if(nodes,
                           [&](std::shared_ptr<Node> node) -> auto {
-                              auto p = node->func.template target<T*>();
+                              auto p = node->func.template target<FuncT*>();
                               return p && *p == func;
                           });
         }
@@ -349,10 +401,11 @@ namespace stdpp::event {
         }
 
         [[nodiscard]] auto size() const noexcept -> size_t {
+            std::shared_lock _(mutex);
             return nodes.size();
         }
     private:
-        std::shared_mutex mutex;
+        mutable std::shared_mutex mutex;
         std::vector<std::shared_ptr<Node>> nodes;
     };
 
@@ -407,7 +460,7 @@ namespace stdpp::event {
             {
                 std::unique_lock _(mutex);
                 for (auto& dispatcher : dispatchers) {
-                    dispatcher.push_back(node);
+                    dispatcher.second.push_back(node);
                 }
             }
 
@@ -538,7 +591,12 @@ namespace stdpp::event {
         }
 
         auto size() const noexcept -> size_t {
-            return dispatchers.size();
+            std::shared_lock _(mutex);
+            size_t total = 0;
+            for (const auto& [key, list] : dispatchers) {
+                total += list.size();
+            }
+            return total;
         }
     private:
         mutable std::shared_mutex mutex;
@@ -616,13 +674,11 @@ namespace stdpp::event {
 
         auto remove(FuncT* func) -> void {
             std::unique_lock _(cb_mutex);
-            for (auto& callback : callbacks | std::views::values) {
-                std::erase_if(callback,
-                              [&](std::shared_ptr<Node> node) -> auto {
-                                  auto p = node->func.template target<FuncT*>();
-                                  return p && *p == func;
-                              });
-            }
+            std::erase_if(callbacks,
+                          [&](const std::shared_ptr<Node>& node) -> auto {
+                              auto p = node->func.template target<FuncT*>();
+                              return p && *p == func;
+                          });
         }
 
         auto remove(const Handle& handle) -> void {
@@ -678,20 +734,26 @@ namespace stdpp::event {
                 for (auto& n : targets) {
                     std::apply([&](auto&&... unpacked) -> auto {
                                    try {
-                                       std::unique_lock _(n->mutex);
-                                       if (n->results.size() >= MaxResults) {
-                                           n->results.pop();
-                                       }
-
                                        if constexpr (is_void) {
                                            n->func(unpacked...);
+                                           std::unique_lock _(n->mutex);
+                                           if (n->results.size() >= MaxResults) {
+                                               n->results.pop();
+                                           }
                                            n->results.push(true);
                                        } else {
                                            auto r = n->func(unpacked...);
+                                           std::unique_lock _(n->mutex);
+                                           if (n->results.size() >= MaxResults) {
+                                               n->results.pop();
+                                           }
                                            n->results.push(std::move(r));
                                        }
                                    } catch (...) {
                                        std::unique_lock _(n->mutex);
+                                       if (n->results.size() >= MaxResults) {
+                                           n->results.pop();
+                                       }
                                        n->results.push({});
                                    }
                                    ++n->seq;
@@ -707,17 +769,19 @@ namespace stdpp::event {
         }
 
         [[nodiscard]] auto size() const noexcept -> size_t {
+            std::shared_lock _(cb_mutex);
             return callbacks.size();
         }
 
         [[nodiscard]] auto queue_size() const noexcept -> size_t {
+            std::shared_lock _(queue_mutex);
             return queue.size();
         }
     private:
-        std::shared_mutex cb_mutex;
+        mutable std::shared_mutex cb_mutex;
         std::vector<std::shared_ptr<Node>> callbacks;
 
-        std::shared_mutex queue_mutex;
+        mutable std::shared_mutex queue_mutex;
         std::queue<ArgsTuple> queue;
     };
 
@@ -892,19 +956,26 @@ namespace stdpp::event {
                 for (auto& n : targets) {
                     std::apply([&](auto&&... unpacked) -> auto {
                                    try {
-                                       std::unique_lock _(n->mutex);
-                                       if (n->results.size() >= MaxResults) {
-                                           n->results.pop();
-                                       }
                                        if constexpr (is_void) {
                                            n->func(unpacked...);
+                                           std::unique_lock _(n->mutex);
+                                           if (n->results.size() >= MaxResults) {
+                                               n->results.pop();
+                                           }
                                            n->results.push(true);
                                        } else {
                                            auto r = n->func(unpacked...);
+                                           std::unique_lock _(n->mutex);
+                                           if (n->results.size() >= MaxResults) {
+                                               n->results.pop();
+                                           }
                                            n->results.push(std::move(r));
                                        }
                                    } catch (...) {
                                        std::unique_lock _(n->mutex);
+                                       if (n->results.size() >= MaxResults) {
+                                           n->results.pop();
+                                       }
                                        n->results.push({});
                                    }
                                    ++n->seq;
@@ -920,17 +991,27 @@ namespace stdpp::event {
         }
 
         [[nodiscard]] auto size() const noexcept -> size_t {
-            return callbacks.size();
+            std::shared_lock _(cb_mutex);
+            size_t total = 0;
+            for (const auto& [key, list] : callbacks) {
+                total += list.size();
+            }
+            return total;
         }
 
         [[nodiscard]] auto queue_size() const noexcept -> size_t {
-            return queues.size();
+            std::shared_lock _(queue_mutex);
+            size_t total = 0;
+            for (const auto& [key, q] : queues) {
+                total += q.size();
+            }
+            return total;
         }
     private:
-        std::shared_mutex cb_mutex;
+        mutable std::shared_mutex cb_mutex;
         std::unordered_map<Key, std::vector<std::shared_ptr<Node>>> callbacks;
 
-        std::shared_mutex queue_mutex;
+        mutable std::shared_mutex queue_mutex;
         std::unordered_map<Key, std::queue<ArgsTuple>> queues;
     };
-}
+} // namespace stdpp::event
