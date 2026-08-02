@@ -27,7 +27,7 @@ It provides **five composable primitives** ranging from zero-overhead `FastEvent
 
 | Component                          | Dispatch  | Queue      | Return Value              | Thread Safety | Overhead                   |
 | ---------------------------------- | --------- | ---------- | ------------------------- | ------------- | -------------------------- |
-| `FastEvent<R(Args...)>`            | broadcast | —          | ❌                        | ❌            | zero-overhead (raw fn ptr) |
+| `FastEvent<R, Args...>`            | broadcast | —          | ❌                        | ❌            | zero-overhead (raw fn ptr) |
 | `Event<R(Args...)>`                | broadcast | —          | `Handle::last()`          | ✅            | moderate                   |
 | `Dispatcher<Key, R(Args...)>`      | by key    | —          | `Handle::last()`          | ✅            | moderate                   |
 | `EventQueue<R(Args...)>`           | broadcast | ✅ enqueue | `Handle::last()` (vector) | ✅            | moderate                   |
@@ -40,7 +40,7 @@ It provides **five composable primitives** ranging from zero-overhead `FastEvent
 > High-frequency, lock-free event invocation using **raw function pointers** with **generation-based slot reuse**.
 
 ```cpp
-stdpp::event::FastEvent<void(int)> fast;
+stdpp::event::FastEvent<void, int> fast;   // R and Args are separate template parameters
 
 auto h1 = fast.append([](int v) { /* ... */ });
 auto h2 = fast += [](int v) { /* ... */ };
@@ -55,6 +55,7 @@ fast -= h2;        // remove by Handle
 - `free_list` recycles removed slots
 - **Not thread-safe** — designed for single-threaded hot paths
 - Returns `void` only (no return value collection)
+- `operator()` is index-based: appending a callback from inside a callback is safe (the new callback fires later in the same round) and exceptions are isolated per callback
 
 ---
 
@@ -175,12 +176,14 @@ Every call to `append()` / `subscribe()` returns a **Handle**:
 auto h = event.append(callback);
 ```
 
-| API             | Description                               |
-| --------------- | ----------------------------------------- |
-| `wait()`        | Block until the next execution completes  |
-| `wait(timeout)` | Block with timeout                        |
-| `last()`        | Retrieve the most recent execution result |
-| Auto-unbind     | Automatically unsubscribed on destruction |
+| API                | Description                                        |
+| ------------------ | -------------------------------------------------- |
+| `wait()`           | Block until the **next** execution completes       |
+| `wait(timeout)`    | Block with timeout (waits for the next execution)  |
+| `wait_until(target)` | Block until the execution counter reaches `target` |
+| `seq()`            | Query the current execution counter                |
+| `last()`           | Retrieve the most recent execution result          |
+| Auto-unbind        | Automatically unsubscribed on destruction          |
 
 **Important `wait()` semantics by component:**
 
@@ -198,7 +201,15 @@ auto h = event.append(callback);
 > }
 > ```
 
-**Handle internally holds a `weak_ptr`** — it never extends the lifetime of the callback node. If the event is destroyed or the callback removed, all Handle operations become safe no-ops.
+**Reliable wait pattern (recommended):** `wait()` always waits for the *next* execution — if the event already fired before you call `wait()`, it blocks until the *following* one. Use `seq()` + `wait_until()` to wait for a specific execution deterministically:
+
+```cpp
+const auto base = h.seq();   // snapshot the current counter
+event(42);                   // trigger
+h.wait_until(base + 1);      // returns true when this trigger completed
+```
+
+**Handle internally holds a `weak_ptr`** — it never extends the lifetime of the callback node. If the event is destroyed or the callback removed, all Handle operations become safe no-ops (`seq()` returns 0, waits return `false`).
 
 ---
 
@@ -259,8 +270,17 @@ qd.remove(h);
 
 ## Design Notes
 
-- Header-only C++17, no external dependencies beyond the standard library
+- Header-only C++20, no external dependencies beyond the standard library
 - `Handle` uses `weak_ptr` internally — safe against dangling references
 - `FastEvent` uses raw function pointers + generation-based slots for zero-overhead hot paths
 - Queue-based components have a `MaxResults` template parameter (default 1024); oldest results are evicted when the limit is reached
 - Callback list is snapshot-copied on invocation — adding/removing during dispatch is safe and takes effect next time
+- `size()` returns the total number of registered callbacks; `queue_size()` (queue components) returns the number of pending argument batches
+
+## What's New in 1.3.0
+
+- **New `seq()` / `wait_until(target)`** on all handles — deterministic waiting for a specific execution count (see [Handle Semantics](#handle-semantics))
+- **`EventQueue` / `QueueDispatcher` callbacks run outside the node lock** — calling `last()` on your own handle inside a callback is now safe (no self-deadlock)
+- **`FastEvent::operator()`** is index-based and exception-isolated — a throwing callback no longer terminates the process
+- **`size()` / `queue_size()` semantics unified** — `size()` = total callbacks, `queue_size()` = pending arguments (with locking)
+- Fixes: `Event::operator-=(FuncT*)`, `Dispatcher` global subscription, `EventQueue::remove(FuncT*)` (previously uncompilable when instantiated)

@@ -27,7 +27,7 @@
 
 | 组件                               | 分发方式 | 队列       | 返回值收集                 | 线程安全 | 开销                 |
 | ---------------------------------- | -------- | ---------- | -------------------------- | -------- | -------------------- |
-| `FastEvent<R(Args...)>`            | 广播     | —          | ❌                         | ❌       | 零开销（裸函数指针） |
+| `FastEvent<R, Args...>`            | 广播     | —          | ❌                         | ❌       | 零开销（裸函数指针） |
 | `Event<R(Args...)>`                | 广播     | —          | `Handle::last()`           | ✅       | 中等                 |
 | `Dispatcher<Key, R(Args...)>`      | 按键     | —          | `Handle::last()`           | ✅       | 中等                 |
 | `EventQueue<R(Args...)>`           | 广播     | ✅ enqueue | `Handle::last()`（vector） | ✅       | 中等                 |
@@ -40,7 +40,7 @@
 > 高频、无锁的事件调用，使用**裸函数指针** + **基于 generation 的槽位复用**。
 
 ```cpp
-stdpp::event::FastEvent<void(int)> fast;
+stdpp::event::FastEvent<void, int> fast;   // R 与 Args 为分离的模板参数
 
 auto h1 = fast.append([](int v) { /* ... */ });
 auto h2 = fast += [](int v) { /* ... */ };
@@ -55,6 +55,7 @@ fast -= h2;        // 按 Handle 移除
 - `free_list` 回收已移除的槽位
 - **非线程安全** — 专为单线程热点路径设计
 - 仅返回 `void`（不支持返回值收集）
+- `operator()` 为索引遍历：回调内 append 新回调是安全的（新回调在本轮稍后被触发），且每个回调异常被隔离
 
 ---
 
@@ -175,12 +176,14 @@ auto results = h.last();           // {20, 40, 60}
 auto h = event.append(callback);
 ```
 
-| API             | 说明                      |
-| --------------- | ------------------------- |
-| `wait()`        | 阻塞直到下一次执行完成    |
-| `wait(timeout)` | 带超时的阻塞等待          |
-| `last()`        | 获取最近一次执行的结果    |
-| 自动解绑        | Handle 析构时自动取消订阅 |
+| API                | 说明                            |
+| ------------------ | ------------------------------- |
+| `wait()`           | 阻塞直到**下一次**执行完成      |
+| `wait(timeout)`    | 带超时的阻塞等待（等待下一次）  |
+| `wait_until(target)` | 阻塞直到执行计数达到 `target` |
+| `seq()`            | 查询当前执行计数                |
+| `last()`           | 获取最近一次执行的结果          |
+| 自动解绑           | Handle 析构时自动取消订阅       |
 
 **各组件的 `wait()` 语义差异：**
 
@@ -198,7 +201,15 @@ auto h = event.append(callback);
 > }
 > ```
 
-**Handle 内部持有 `weak_ptr`** — 不会延长回调节点的生命周期。如果事件被销毁或回调被移除，所有 Handle 操作安全地成为空操作。
+**推荐的可靠等待模式：** `wait()` 总是等待*下一次*执行——如果事件在你调用 `wait()` 之前已经触发，它会阻塞到*下下次*。如需确定性等待某次特定执行，使用 `seq()` + `wait_until()`：
+
+```cpp
+const auto base = h.seq();   // 记录当前计数
+event(42);                   // 触发
+h.wait_until(base + 1);      // 本次触发完成后返回 true
+```
+
+**Handle 内部持有 `weak_ptr`** — 不会延长回调节点的生命周期。如果事件被销毁或回调被移除，所有 Handle 操作安全地成为空操作（`seq()` 返回 0，等待返回 `false`）。
 
 ---
 
@@ -259,8 +270,17 @@ qd.remove(h);
 
 ## 设计说明
 
-- Header-only C++17，除标准库外无外部依赖
+- Header-only C++20，除标准库外无外部依赖
 - `Handle` 内部使用 `weak_ptr` — 安全防止悬挂引用
 - `FastEvent` 使用裸函数指针 + generation-based 槽位，实现零开销热点路径
 - 队列组件提供 `MaxResults` 模板参数（默认 1024），超限时自动淘汰最旧结果
 - 回调列表在执行时快照拷贝 — 在 dispatch 过程中添加/移除回调是安全的，下次生效
+- `size()` 返回注册回调总数；`queue_size()`（队列组件）返回待处理参数批次数
+
+## 1.3.0 更新内容
+
+- **新增 `seq()` / `wait_until(target)`**（所有 Handle）— 确定性等待特定执行计数（见 [Handle 语义](#handle-语义)）
+- **`EventQueue` / `QueueDispatcher` 回调在节点锁外执行** — 回调内对自身句柄调用 `last()` 现在安全（不再自锁死锁）
+- **`FastEvent::operator()`** 改为索引遍历并隔离异常 — 抛异常的回调不再导致进程终止
+- **`size()` / `queue_size()` 语义统一** — `size()` = 回调总数，`queue_size()` = 待处理参数数（并补锁）
+- 修复：`Event::operator-=(FuncT*)`、`Dispatcher` 全局订阅、`EventQueue::remove(FuncT*)`（此前实例化即编译失败）
